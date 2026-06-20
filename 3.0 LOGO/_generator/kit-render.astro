@@ -1,0 +1,158 @@
+---
+// kit-render.astro — TEMPORARY parametric generator for the 3.0 brand kit.
+// Renders the real dither background + either the "Stride Systems" wordmark +
+// gold tagline, or the white (or white-gold) three-bar icon, at an arbitrary
+// WxH and dither variant. Driven by URL params so a Playwright loop can
+// screenshot the whole size matrix. Removed once the kit is generated.
+//
+//   /kit-render?w=1500&h=150&mode=wordmark&variant=business
+//   /kit-render?w=512&h=512&mode=icon&variant=individuals&icon=whitegold
+import DitherBackground from '../components/DitherBackground.astro';
+import '../styles/deck.css';
+import '@fontsource/damion';
+import '@fontsource/geist-mono/400.css';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="robots" content="noindex, nofollow" />
+    <title>kit render</title>
+    <style>
+      html, body { margin: 0; padding: 0; overflow: hidden; background: #080808; }
+      #frame {
+        position: relative;
+        z-index: 2;
+        display: flex;
+        flex-direction: column;
+        align-items: center;
+        justify-content: center;
+      }
+      #wordwrap { display: flex; flex-direction: column; align-items: center; }
+      .wordmark {
+        font-family: var(--font-brand);
+        font-weight: 400;
+        color: #fafafa;
+        /* line-height: normal reserves the font's real descent so the swashy
+           Damion "y" tail is fully inside the box — the tagline below can never
+           overlap it. */
+        line-height: normal;
+        margin: 0;
+        white-space: nowrap;
+        text-shadow: 0 6px 40px rgba(0, 0, 0, 0.55);
+      }
+      .tagline {
+        font-family: var(--font-mono);
+        text-transform: uppercase;
+        color: hsla(40, 72%, 70%, 1);
+        margin: 0;
+        white-space: nowrap;
+        text-shadow: 0 1px 8px rgba(0, 0, 0, 0.7);
+      }
+      #iconwrap { display: none; }
+      #iconwrap img { display: block; }
+    </style>
+  </head>
+  <!-- data-grad="below": directional glow rising from the bottom, matching the
+       live site (not a flat centered radial). -->
+  <body data-grad="below">
+    <div class="gradlayer" aria-hidden="true"></div>
+    <DitherBackground variant="home" />
+
+    <div id="frame">
+      <div id="wordwrap">
+        <h1 class="wordmark">Stride Systems</h1>
+        <p class="tagline">AI-NATIVE SERVICES</p>
+      </div>
+      <div id="iconwrap">
+        <!-- The actual brand three-bar mark (trans 4.png): correct slant, two
+             white bars + gold tall bar, transparent background. Used as-is for
+             the white-gold variant; CSS-filtered to pure white for the white
+             variant so both share the exact same shape. -->
+        <img id="iconimg" src="/kit-icon.png" alt="" />
+      </div>
+    </div>
+
+    <script is:inline>
+      // Runs during parse (classic inline) — BEFORE the dither's deferred module
+      // script — so setting the canvas variant here takes effect on first init.
+      const q = new URLSearchParams(location.search);
+      const W = +q.get('w') || 1200;
+      const H = +q.get('h') || 630;
+      const MODE = q.get('mode') || 'wordmark';
+      const VARIANT = q.get('variant') || 'home';
+      const ICON = q.get('icon') || 'white'; // white | whitegold
+      const GOLD = 'hsla(40, 72%, 70%, 1)';
+
+      const root = document.documentElement;
+      root.style.width = W + 'px';
+      root.style.height = H + 'px';
+      document.body.style.width = W + 'px';
+      document.body.style.height = H + 'px';
+      const frame = document.getElementById('frame');
+      frame.style.width = W + 'px';
+      frame.style.height = H + 'px';
+
+      const cv = document.querySelector('.dither-canvas');
+      if (cv) cv.dataset.variant = VARIANT;
+
+      window.__kitReady = false;
+      async function fitKit() {
+        await document.fonts.ready;
+        const wordwrap = document.getElementById('wordwrap');
+        const iconwrap = document.getElementById('iconwrap');
+
+        if (MODE === 'icon') {
+          wordwrap.style.display = 'none';
+          iconwrap.style.display = 'block';
+          const img = document.getElementById('iconimg');
+          const s = Math.round(Math.min(W, H) * 0.56);
+          img.style.width = s + 'px';
+          img.style.height = s + 'px';
+          // white-gold = brand asset as-is; white = same shape filtered to pure white.
+          img.style.filter = ICON === 'white' ? 'brightness(0) invert(1)' : 'none';
+          if (!img.complete) await new Promise((r) => { img.onload = r; img.onerror = r; });
+          requestAnimationFrame(() => requestAnimationFrame(() => { window.__kitReady = true; }));
+          return;
+        }
+
+        const wordmark = wordwrap.querySelector('.wordmark');
+        const tagline = wordwrap.querySelector('.tagline');
+        const isThin = H <= 220;
+
+        const TAG_RATIO = 0.185;   // tagline size relative to wordmark (matches the OG)
+        const GAP_RATIO = 0.05;    // small gap; descender already inside the wordmark box
+
+        const apply = (fs) => {
+          wordmark.style.fontSize = fs + 'px';
+          const tfs = fs * TAG_RATIO;
+          tagline.style.fontSize = tfs + 'px';
+          tagline.style.letterSpacing = tfs * 0.34 + 'px';
+          wordwrap.style.gap = fs * GAP_RATIO + 'px';
+        };
+
+        apply(300);
+        const wmW = wordmark.getBoundingClientRect().width;
+        const stackH = wordwrap.getBoundingClientRect().height;
+        const maxW = W * (isThin ? 0.82 : 0.74);
+        const maxStackH = H * (isThin ? 0.86 : 0.78);
+        const scale = Math.min(maxW / wmW, maxStackH / stackH);
+        let fs = 300 * scale;
+        apply(fs);
+
+        // Clamp tagline width if it runs wide.
+        const tr = tagline.getBoundingClientRect();
+        if (tr.width > W * 0.92) {
+          const ts = (W * 0.92) / tr.width;
+          const tfs = fs * TAG_RATIO * ts;
+          tagline.style.fontSize = tfs + 'px';
+          tagline.style.letterSpacing = tfs * 0.34 + 'px';
+        }
+
+        requestAnimationFrame(() => requestAnimationFrame(() => { window.__kitReady = true; }));
+      }
+      fitKit();
+    </script>
+  </body>
+</html>
